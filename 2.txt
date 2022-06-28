@@ -1,0 +1,47 @@
+** fvcore version of PathManager will be deprecated soon. **
+** Please migrate to the version in iopath repo. **
+https://github.com/facebookresearch/iopath 
+
+Config 'configs/freesolo/freesolo_30k.yaml' has no VERSION. Assuming it to be compatible with latest v2.
+Traceback (most recent call last):
+  File "train_net.py", line 81, in <module>
+    launch(
+  File "/home/user/miki/xunfei2/CenterNet2/detectron2/engine/launch.py", line 62, in launch
+    main_func(*args)
+  File "train_net.py", line 74, in main
+    return trainer.train()
+  File "/home/user/miki/xunfei2/CenterNet2/detectron2/engine/defaults.py", line 431, in train
+    super().train(self.start_iter, self.max_iter)
+  File "/home/user/miki/xunfei2/CenterNet2/detectron2/engine/train_loop.py", line 138, in train
+    self.run_step()
+  File "/home/yl/python/Self-Super/FreeSOLO-main/freesolo/engine/trainer.py", line 197, in run_step
+    record_dict = self.model(data_q, branch="supervised")
+  File "/home/yl/.conda/envs/yl_yolov5/lib/python3.8/site-packages/torch/nn/modules/module.py", line 889, in _call_impl
+    result = self.forward(*input, **kwargs)
+  File "/home/yl/python/Self-Super/FreeSOLO-main/freesolo/modeling/solov2/pseudo_solov2.py", line 56, in forward
+    features = self.backbone(images.tensor)
+  File "/home/yl/.conda/envs/yl_yolov5/lib/python3.8/site-packages/torch/nn/modules/module.py", line 889, in _call_impl
+    result = self.forward(*input, **kwargs)
+  File "/home/user/miki/xunfei2/CenterNet2/detectron2/modeling/backbone/fpn.py", line 126, in forward
+    bottom_up_features = self.bottom_up(x)
+  File "/home/yl/.conda/envs/yl_yolov5/lib/python3.8/site-packages/torch/nn/modules/module.py", line 889, in _call_impl
+    result = self.forward(*input, **kwargs)
+  File "/home/user/miki/xunfei2/CenterNet2/detectron2/modeling/backbone/resnet.py", line 448, in forward
+    x = stage(x)
+  File "/home/yl/.conda/envs/yl_yolov5/lib/python3.8/site-packages/torch/nn/modules/module.py", line 889, in _call_impl
+    result = self.forward(*input, **kwargs)
+  File "/home/yl/.conda/envs/yl_yolov5/lib/python3.8/site-packages/torch/nn/modules/container.py", line 119, in forward
+    input = module(input)
+  File "/home/yl/.conda/envs/yl_yolov5/lib/python3.8/site-packages/torch/nn/modules/module.py", line 889, in _call_impl
+    result = self.forward(*input, **kwargs)
+  File "/home/user/miki/xunfei2/CenterNet2/detectron2/modeling/backbone/resnet.py", line 201, in forward
+    out = self.conv3(out)
+  File "/home/yl/.conda/envs/yl_yolov5/lib/python3.8/site-packages/torch/nn/modules/module.py", line 889, in _call_impl
+    result = self.forward(*input, **kwargs)
+  File "/home/user/miki/xunfei2/CenterNet2/detectron2/layers/wrappers.py", line 88, in forward
+    x = self.norm(x)
+  File "/home/yl/.conda/envs/yl_yolov5/lib/python3.8/site-packages/torch/nn/modules/module.py", line 889, in _call_impl
+    result = self.forward(*input, **kwargs)
+  File "/home/user/miki/xunfei2/CenterNet2/detectron2/layers/batch_norm.py", line 54, in forward
+    return x * scale.to(out_dtype) + bias.to(out_dtype)
+RuntimeError: CUDA out of memory. Tried to allocate 2.05 GiB (GPU 0; 10.76 GiB total capacity; 7.37 GiB already allocated; 870.50 MiB free; 8.92 GiB reserved in total by PyTorch)
