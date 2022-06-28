@@ -262,7 +262,7 @@ class SOLOv2(nn.Module):
                 cate_label_list.append(cate_label)
                 ins_ind_label_list.append(ins_ind_label)
                 grid_order_list.append([])
-                emb_label_list.append(emb_label)
+                emb_label_list.append(emb_label)  # 对每个尺度的feature进行处理，每个尺寸的feature都会分配实例的label、grid序号等
                 continue
             gt_bboxes = gt_bboxes_raw[hit_indices]
             gt_labels = gt_labels_raw[hit_indices]
@@ -270,7 +270,7 @@ class SOLOv2(nn.Module):
             gt_embs = gt_embs_raw[hit_indices] #
 
             half_ws = 0.5 * (gt_bboxes[:, 2] - gt_bboxes[:, 0]) * self.sigma  # half_w
-            half_hs = 0.5 * (gt_bboxes[:, 3] - gt_bboxes[:, 1]) * self.sigma  # half_h, why simga?
+            half_hs = 0.5 * (gt_bboxes[:, 3] - gt_bboxes[:, 1]) * self.sigma  # half_h, used to compute center region
 
             # mass center
             center_ws, center_hs = center_of_mass(gt_masks)  # mask center
@@ -279,7 +279,7 @@ class SOLOv2(nn.Module):
             output_stride = 4
             gt_masks = gt_masks.permute(1, 2, 0).to(dtype=torch.uint8).cpu().numpy()  # dimension
             gt_masks = imrescale(gt_masks, scale=1. / output_stride)  # change size (down sample)
-            if len(gt_masks.shape) == 2:
+            if len(gt_masks.shape) == 2:  # 上一步，如果只有一个mask，那么就只有2维
                 gt_masks = gt_masks[..., None]  # 由二维返回三维
             gt_masks = torch.from_numpy(gt_masks).to(dtype=torch.uint8, device=device).permute(2, 0, 1)
             for seg_mask, gt_label, gt_emb, half_h, half_w, center_h, center_w, valid_mask_flag in zip(gt_masks, gt_labels, gt_embs,
@@ -303,7 +303,7 @@ class SOLOv2(nn.Module):
                 left = max(coord_w - 1, left_box)
                 right = min(right_box, coord_w + 1)  # 缩小中心区域
 
-                cate_label[top:(down + 1), left:(right + 1)] = gt_label  # 为该grid分配类别
+                cate_label[top:(down + 1), left:(right + 1)] = gt_label  # 为实例中心区域的grid分配类别
                 emb_label[top:(down + 1), left:(right + 1)] = gt_emb  # 每个grid 的soft labels
                 #cate_label[coord_h, coord_w] = gt_label
                 #cate_soft_label[coord_h, coord_w] = gt_soft_label
@@ -321,10 +321,10 @@ class SOLOv2(nn.Module):
                 ins_label = torch.zeros([0, mask_feat_size[0], mask_feat_size[1]], dtype=torch.uint8, device=device)
             else:
                 ins_label = torch.stack(ins_label, 0)
-            ins_label_list.append(ins_label)
+            ins_label_list.append(ins_label)  # 每个尺度的feature都分成n*n个gird，
             cate_label_list.append(cate_label)
             ins_ind_label_list.append(ins_ind_label)
-            grid_order_list.append(grid_order)
+            grid_order_list.append(grid_order)  # append 一张图某层feature的所有实例
             emb_label_list.append(emb_label)
         return ins_label_list, cate_label_list, ins_ind_label_list, grid_order_list, emb_label_list
 
