@@ -57,7 +57,7 @@ class PseudoSOLOv2(SOLOv2):
         if self.is_freemask:
             return [features, ]
 
-        if "instances" in batched_inputs[0]:  # 检测是否有ins，第一个有即可；后面的都会有
+        if "instances" in batched_inputs[0]:  # 用来处理生成color sim；检测是否有ins，第一个有即可；后面的都会有
             gt_instances = [x["instances"].to(self.device) for x in batched_inputs]  # 2*batch个list，每个list的ins数不同
             original_image_masks = [torch.ones_like(x[0], dtype=torch.float32) for x in original_images]
             # mask out the bottom area where the COCO dataset probably has wrong annotations
@@ -73,11 +73,11 @@ class PseudoSOLOv2(SOLOv2):
             original_images = ImageList.from_tensors(original_images, self.backbone.size_divisibility)
             original_image_masks = ImageList.from_tensors(
                 original_image_masks, self.backbone.size_divisibility, pad_value=0.0
-            )
+            )  # 标准化image_mask（表示何处为真实图像，何处为padding的0）
             self.add_bitmasks_from_boxes(
                 gt_instances, original_images.tensor, original_image_masks.tensor,
                 original_images.tensor.size(-2), original_images.tensor.size(-1)
-            )  # (gt_ins, ori_img, ori_mask,h,w)-->???
+            )  # (gt_ins, ori_img, ori_mask,h,w)-->用来处理生成color sim
         else:
             gt_instances = None
 
@@ -109,7 +109,7 @@ class PseudoSOLOv2(SOLOv2):
 
         elif branch == "supervised":
             mask_feat_size = mask_pred.size()[-2:]
-            targets = self.get_ground_truth(gt_instances, mask_feat_size)  # gt尺寸并不规范
+            targets = self.get_ground_truth(gt_instances, mask_feat_size)  # gt尺寸并不规范，输入规范尺存
             losses = self.loss(cate_pred, kernel_pred, emb_pred, mask_pred, targets)
             return losses
 
