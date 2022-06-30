@@ -295,7 +295,7 @@ def unfold_wo_center(x, kernel_size, dilation):
         unfolded_x[:, :, size // 2 + 1:]
     ), dim=2)
 
-    return unfolded_x  # 每个像素由8个值表示，
+    return unfolded_x  # 每个像素的8邻域像素，
 
 
 def get_images_color_similarity(images, image_masks, kernel_size, dilation):
@@ -306,16 +306,16 @@ def get_images_color_similarity(images, image_masks, kernel_size, dilation):
         images, kernel_size=kernel_size, dilation=dilation
     )
 
-    diff = images[:, :, None] - unfolded_images  # (1,3,1,h,w)-(1,3,8,h,w)  # 1.3.8  色彩空间的差值
-    similarity = torch.exp(-torch.norm(diff, dim=1) * 0.5)  # 1. 8
+    diff = images[:, :, None] - unfolded_images  # (1,3,1,h,w)-(1,3,8,h,w)  # (1, 3, 8)  色彩空间的差值
+    similarity = torch.exp(-torch.norm(diff, dim=1) * 0.5)  # (1, 8)
 
     unfolded_weights = unfold_wo_center(
         image_masks[None, None], kernel_size=kernel_size,
         dilation=dilation
     )  # (h,w)-->(1,1,h,w)-->(1,1,8,h,w)
-    unfolded_weights = torch.max(unfolded_weights, dim=1)[0]  # 1. 8
+    unfolded_weights = torch.max(unfolded_weights, dim=1)[0]  # (1, 8)
 
-    return similarity * unfolded_weights  # 1. 8
+    return similarity * unfolded_weights  # (1, 8)
 
 
 def compute_pairwise_term(mask_logits, pairwise_size, pairwise_dilation):
