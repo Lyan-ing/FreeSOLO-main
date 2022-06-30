@@ -255,7 +255,7 @@ def dice_coefficient(x, target):
     target = target.reshape(n_inst, -1)
     intersection = (x * target).sum(dim=1)
     union = (x ** 2.0).sum(dim=1) + (target ** 2.0).sum(dim=1) + eps
-    loss = 1. - (2 * intersection / union)
+    loss = 1. - (2 * intersection / union)  # https://zhuanlan.zhihu.com/p/420773975
     return loss
 
 
@@ -319,7 +319,7 @@ def get_images_color_similarity(images, image_masks, kernel_size, dilation):
 
 
 def compute_pairwise_term(mask_logits, pairwise_size, pairwise_dilation):
-    assert mask_logits.dim() == 4
+    assert mask_logits.dim() == 4  # 3, 2
 
     log_fg_prob = F.logsigmoid(mask_logits)
     log_bg_prob = F.logsigmoid(-mask_logits)
@@ -327,7 +327,7 @@ def compute_pairwise_term(mask_logits, pairwise_size, pairwise_dilation):
     log_fg_prob_unfold = unfold_wo_center(
         log_fg_prob, kernel_size=pairwise_size,
         dilation=pairwise_dilation
-    )
+    )  # (11, 1, 192, 312)-->(11, 1, 8, 192, 312)
     log_bg_prob_unfold = unfold_wo_center(
         log_bg_prob, kernel_size=pairwise_size,
         dilation=pairwise_dilation
@@ -335,14 +335,14 @@ def compute_pairwise_term(mask_logits, pairwise_size, pairwise_dilation):
 
     # the probability of making the same prediction = p_i * p_j + (1 - p_i) * (1 - p_j)
     # we compute the the probability in log space to avoid numerical instability
-    log_same_fg_prob = log_fg_prob[:, :, None] + log_fg_prob_unfold
-    log_same_bg_prob = log_bg_prob[:, :, None] + log_bg_prob_unfold
+    log_same_fg_prob = log_fg_prob[:, :, None] + log_fg_prob_unfold  # (11, 1, 1, 192, 312)+(11, 1, 8, 192, 312)
+    log_same_bg_prob = log_bg_prob[:, :, None] + log_bg_prob_unfold  # 当前pixel预测值加(log的加是乘)到八邻域预测值上?? why?
 
     max_ = torch.max(log_same_fg_prob, log_same_bg_prob)
     log_same_prob = torch.log(
         torch.exp(log_same_fg_prob - max_) +
-        torch.exp(log_same_bg_prob - max_)
-    ) + max_
+        torch.exp(log_same_bg_prob - max_)  # 相减后所有位置必有值等于0，exp再相加则必大于1；再经过log则接近0（大于）
+    ) + max_  # 无论是前景还是背景，都希望预测值与周围色彩空间相似的像素预测值接近
 
     # loss = -log(prob)
-    return -log_same_prob[:, 0]
+    return -log_same_prob[:, 0]  # (11, 1, 8, 192, 312)-->(11, 8, 192, 312)

@@ -116,9 +116,9 @@ class SOLOv2(nn.Module):
             for p in self.backbone.parameters():
                 p.requires_grad = False
             print("froze backbone parameters")
-            #for p in self.mask_head.parameters():
+            # for p in self.mask_head.parameters():
             #    p.requires_grad = False
-            #print("froze mask head parameters")
+            # print("froze mask head parameters")
 
         # loss
         self.ins_loss_weight = cfg.MODEL.SOLOV2.LOSS.DICE_WEIGHT
@@ -168,7 +168,6 @@ class SOLOv2(nn.Module):
 
         features = self.backbone(images.tensor)
 
-
         # ins branch
         ins_features = [features[f] for f in self.instance_in_features]
         ins_features = self.split_feats(ins_features)
@@ -205,15 +204,15 @@ class SOLOv2(nn.Module):
         return images
 
     @torch.no_grad()
-    def get_ground_truth(self, gt_instances, mask_feat_size=None):
+    def get_ground_truth(self, gt_instances, mask_feat_size=None):  # 生成一个batch的FPN的GT
         ins_label_list, cate_label_list, ins_ind_label_list, grid_order_list, cate_soft_label_list = [], [], [], [], []
-        if len(gt_instances) and gt_instances[0].has('image_color_similarity'):
+        if len(gt_instances) and gt_instances[0].has('image_color_similarity'):   # get the color sim of each images
             image_color_similarity_list = [gt_instance.image_color_similarity for gt_instance in gt_instances]
-        else:   # get the color sim of each images
+        else:
             image_color_similarity_list = []
 
-        for img_idx in range(len(gt_instances)):  # 一张一张图来，ins大小不同，需单独处理
-            cur_ins_label_list, cur_cate_label_list, cur_ins_ind_label_list, cur_grid_order_list, cur_cate_soft_label_list =\
+        for img_idx in range(len(gt_instances)):  # 一张一张图来，每张图的大小不同，需单独处理（内部ins大小也不同）
+            cur_ins_label_list, cur_cate_label_list, cur_ins_ind_label_list, cur_grid_order_list, cur_cate_soft_label_list = \
                 self.get_ground_truth_single(img_idx, gt_instances, mask_feat_size=mask_feat_size)
             ins_label_list.append(cur_ins_label_list)
             cate_label_list.append(cur_cate_label_list)
@@ -244,8 +243,8 @@ class SOLOv2(nn.Module):
         grid_order_list = []
         emb_label_list = []
         for (lower_bound, upper_bound), stride, num_grid \
-                in zip(self.scale_ranges, self.strides, self.num_grids):  # 根据ins的大小，选定每个实例应该由哪层处理？
-
+                in zip(self.scale_ranges, self.strides, self.num_grids):
+            # 根据ins的大小，选定每个实例应该由哪层处理，一个实例可能有多层处理？
             hit_indices = ((gt_areas >= lower_bound) & (gt_areas <= upper_bound)).nonzero().flatten()  # 非0索引
             num_ins = len(hit_indices)
 
@@ -267,14 +266,14 @@ class SOLOv2(nn.Module):
             gt_bboxes = gt_bboxes_raw[hit_indices]
             gt_labels = gt_labels_raw[hit_indices]
             gt_masks = gt_masks_raw[hit_indices, ...]
-            gt_embs = gt_embs_raw[hit_indices] #
+            gt_embs = gt_embs_raw[hit_indices]  #
 
-            half_ws = 0.5 * (gt_bboxes[:, 2] - gt_bboxes[:, 0]) * self.sigma  # half_w
+            half_ws = 0.5 * (gt_bboxes[:, 2] - gt_bboxes[:, 0]) * self.sigma  # half_w = center area
             half_hs = 0.5 * (gt_bboxes[:, 3] - gt_bboxes[:, 1]) * self.sigma  # half_h, used to compute center region
 
             # mass center
             center_ws, center_hs = center_of_mass(gt_masks)  # mask center
-            valid_mask_flags = gt_masks.sum(dim=-1).sum(dim=-1) > 0
+            valid_flags = gt_masks.sum(dim=-1).sum(dim=-1) > 0
 
             output_stride = 4
             gt_masks = gt_masks.permute(1, 2, 0).to(dtype=torch.uint8).cpu().numpy()  # dimension
@@ -282,15 +281,18 @@ class SOLOv2(nn.Module):
             if len(gt_masks.shape) == 2:  # 上一步，如果只有一个mask，那么就只有2维
                 gt_masks = gt_masks[..., None]  # 由二维返回三维
             gt_masks = torch.from_numpy(gt_masks).to(dtype=torch.uint8, device=device).permute(2, 0, 1)
-            for seg_mask, gt_label, gt_emb, half_h, half_w, center_h, center_w, valid_mask_flag in zip(gt_masks, gt_labels, gt_embs,
-                                                                                               half_hs, half_ws,
-                                                                                               center_hs, center_ws,
-                                                                                               valid_mask_flags):
-                if not valid_mask_flag:
+            for seg_mask, gt_label, gt_emb, half_h, half_w, center_h, center_w, valid_mask_flag in zip(gt_masks,
+                                                                                                       gt_labels,
+                                                                                                       gt_embs,
+                                                                                                       half_hs, half_ws,
+                                                                                                       center_hs,
+                                                                                                       center_ws,
+                                                                                                       valid_flags):
+                if not valid_mask_flag:  # 该循环处理每个mask
                     continue
                 upsampled_size = (mask_feat_size[0] * 4, mask_feat_size[1] * 4)  # 每个batch的标准尺寸
                 coord_w = int((center_w / upsampled_size[1]) // (1. / num_grid))  # 取整
-                coord_h = int((center_h / upsampled_size[0]) // (1. / num_grid))  # 中心点的grid_index？
+                coord_h = int((center_h / upsampled_size[0]) // (1. / num_grid))  # 该实例mask中心点的grid_index
 
                 # left, top, right, down
                 top_box = max(0, int(((center_h - half_h) / upsampled_size[0]) // (1. / num_grid)))  # bbox中心区域的grid_idx
@@ -305,104 +307,116 @@ class SOLOv2(nn.Module):
 
                 cate_label[top:(down + 1), left:(right + 1)] = gt_label  # 为实例中心区域的grid分配类别
                 emb_label[top:(down + 1), left:(right + 1)] = gt_emb  # 每个grid 的soft labels
-                #cate_label[coord_h, coord_w] = gt_label
-                #cate_soft_label[coord_h, coord_w] = gt_soft_label
+                # cate_label[coord_h, coord_w] = gt_label
+                # cate_soft_label[coord_h, coord_w] = gt_soft_label
                 for i in range(top, down + 1):
                     for j in range(left, right + 1):
-                        label = int(i * num_grid + j)  # K=i*S+j
+                        label = int(i * num_grid + j)  # K=i*S+j, 中心区域的序号
 
                         cur_ins_label = torch.zeros([mask_feat_size[0], mask_feat_size[1]], dtype=torch.uint8,
                                                     device=device)
-                        cur_ins_label[:seg_mask.shape[0], :seg_mask.shape[1]] = seg_mask
-                        ins_label.append(cur_ins_label)
+                        cur_ins_label[:seg_mask.shape[0], :seg_mask.shape[1]] = seg_mask  # 将实际大小的mask嵌入到标准尺存的0mask中（）
+                        ins_label.append(cur_ins_label)  # 一个实例有n个中心区域，这些中心区域在grid上均表示该实例，因此他们的mask相同
                         ins_ind_label[label] = True
                         grid_order.append(label)
             if len(ins_label) == 0:
                 ins_label = torch.zeros([0, mask_feat_size[0], mask_feat_size[1]], dtype=torch.uint8, device=device)
             else:
-                ins_label = torch.stack(ins_label, 0)
-            ins_label_list.append(ins_label)  # 每个尺度的feature都分成n*n个gird，
-            cate_label_list.append(cate_label)
-            ins_ind_label_list.append(ins_ind_label)
-            grid_order_list.append(grid_order)  # append 一张图某层feature的所有实例
-            emb_label_list.append(emb_label)
+                ins_label = torch.stack(ins_label, 0)  # 所有mask，所有中心区域
+            ins_label_list.append(ins_label)  # 每个尺存feature的ins（*中心区域的个数）的真实mask
+            cate_label_list.append(cate_label)  # 每个尺度的feature都分成(n,n)个gird，分别嵌入ins的类别（前景背景）
+            ins_ind_label_list.append(ins_ind_label)  # 每层feature都分成n*n个gird，每个层的grid是否存在实例（实例中心区域是否在该grid）
+            grid_order_list.append(grid_order)  # append 一张图某层feature的所有实例中心区域的grid索引
+            emb_label_list.append(emb_label)  # 每个尺度的feature都分成(n,n)个gird,分别嵌入ins类别的emb(soft labels)
         return ins_label_list, cate_label_list, ins_ind_label_list, grid_order_list, emb_label_list
 
     def loss(self, cate_preds, kernel_preds, emb_preds, ins_pred, targets, pseudo=False):
         self._iter += 1
         ins_label_list, cate_label_list, ins_ind_label_list, grid_order_list, emb_label_list, image_color_similarity_list = targets
 
-        # ins
+        # ins list 5:(n, h, w), n为当前batch当前层实例中心区域占的所有grid数，该grid负责预测的实例的真实mask，同一个实例可能由多个grid预测，他们的mask一样
         ins_labels = [torch.cat([ins_labels_level_img
-                                 for ins_labels_level_img in ins_labels_level], 0)
-                      for ins_labels_level in zip(*ins_label_list)]
+                                 for ins_labels_level_img in ins_labels_level], 0)  # 将每个Feature层的实例（*中心区域）的mask cat起来
+                      for ins_labels_level in zip(*ins_label_list)]  # list 5:(n, h, w), n为当前batch实例数*中心区域大小
         if len(image_color_similarity_list):
-            image_color_similarity = []
-            for level_idx in range(len(ins_label_list[0])):
-                level_image_color_similarity = []
-                for img_idx in range(len(ins_label_list)):
+            image_color_similarity = []  # 所有层所有img的color sim 拼接
+            for level_idx in range(len(ins_label_list[0])):  # 5 P2-P6
+                level_image_color_similarity = []  # 每层所有img的color sim 拼接
+                for img_idx in range(len(ins_label_list)):  # batch size*2
                     num = ins_label_list[img_idx][level_idx].shape[0]
-                    cur_image_color_sim = image_color_similarity_list[img_idx][[0]].expand(num, -1, -1, -1)
+                    cur_image_color_sim = image_color_similarity_list[img_idx][[0]].expand(num, -1, -1, -1)  # sim of
+                    # each img，一张图的每个ins的sim相同，只取第一个
                     level_image_color_similarity.append(cur_image_color_sim)
                 image_color_similarity.append(torch.cat(level_image_color_similarity))
         else:
             image_color_similarity = ins_labels.copy()
 
+        # def ker_pred (k_p, grid_list):
+        #     kernel_pred = []
+        #     for kernel_preds_level, grid_orders_level in zip(k_p, zip(*grid_list)):  # 5*(n, 256, 40, 40), n*(5)-->(n, 256, 40, 40), n
+        #         for kernel_preds_level_img, grid_orders_level_img in zip(kernel_preds_level, grid_orders_level):  # (256, 40, 40),(1ist一张图某层的所有实例的中心区域序号)
+        #             a = kernel_preds_level_img.view(kernel_preds_level_img.shape[0], -1)[:, grid_orders_level_img]
+        #             kernel_pred.append(a)  # 获取中心区域grid对应的kernel_pred, list_n*5, 256, grid_num
+        #     print("111")
+        #     return kernel_pred
+        # pp = ker_pred(kernel_preds, grid_order_list)
 
         kernel_preds = [[kernel_preds_level_img.view(kernel_preds_level_img.shape[0], -1)[:, grid_orders_level_img]
                          for kernel_preds_level_img, grid_orders_level_img in
-                         zip(kernel_preds_level, grid_orders_level)]
+                         zip(kernel_preds_level, grid_orders_level)]  # kernel_p : Pn, (b, c, h, w) gird_o_l : img, Pn
                         for kernel_preds_level, grid_orders_level in zip(kernel_preds, zip(*grid_order_list))]
-        # generate masks
+        # 获取图像*5个 feature 的所有中心区域grid对应的kernel_pred: list_5, list_n, 256, grid_num
+        # generate masks，
         ins_pred_list = []
-        for b_kernel_pred in kernel_preds:
+        for b_kernel_pred in kernel_preds:  # 每层
             b_mask_pred = []
-            for idx, kernel_pred in enumerate(b_kernel_pred):
+            for idx, kernel_pred in enumerate(b_kernel_pred):  # 每张图
 
-                if kernel_pred.size()[-1] == 0:
+                if kernel_pred.size()[-1] == 0:  # gird_num
                     continue
-                cur_ins_pred = ins_pred[idx, ...]
-                H, W = cur_ins_pred.shape[-2:]
-                N, I = kernel_pred.shape
-                cur_ins_pred = cur_ins_pred.unsqueeze(0)
-                kernel_pred = kernel_pred.permute(1, 0).view(I, -1, 1, 1)
-                cur_ins_pred = F.conv2d(cur_ins_pred, kernel_pred, stride=1).view(-1, H, W)
+                cur_ins_pred = ins_pred[idx, ...]  # 第idx张图的ins_pred = mask_pred 融合了P2-P5的特征
+                H, W = cur_ins_pred.shape[-2:]  # mask_pred (h, w)
+                N, I = kernel_pred.shape  # (256, 当前层所有实例的中心区域占grid的数量)
+                cur_ins_pred = cur_ins_pred.unsqueeze(0)  # () (1,256,h,w)
+                kernel_pred = kernel_pred.permute(1, 0).view(I, -1, 1, 1)  # (256,m)-->(m, 256, 1,1) m种256通道的1*1卷积核
+                cur_ins_pred = F.conv2d(cur_ins_pred, kernel_pred, stride=1).view(-1, H, W)  # (1,m,h,w)-->(1*m,h,w)
                 b_mask_pred.append(cur_ins_pred)
             if len(b_mask_pred) == 0:
                 b_mask_pred = None
             else:
-                b_mask_pred = torch.cat(b_mask_pred, 0)
-            ins_pred_list.append(b_mask_pred)
+                b_mask_pred = torch.cat(b_mask_pred, 0)  # 所有图的m个cat起来
+            ins_pred_list.append(b_mask_pred)  # list_5 层 所有图的mask_pred cat起来 5(\sum m, h,w)
 
         ins_ind_labels = [
             torch.cat([ins_ind_labels_level_img.flatten()
                        for ins_ind_labels_level_img in ins_ind_labels_level])
-            for ins_ind_labels_level in zip(*ins_ind_label_list)
-        ]
-        flatten_ins_ind_labels = torch.cat(ins_ind_labels)
+            for ins_ind_labels_level in zip(*ins_ind_label_list)  # list_n张图，list_5每层的grid(1600 1296 576 256 144)是否存在实例
+        ]  # tuple_n cat起来--->list_5 (1600*n 1296*n....)
+        flatten_ins_ind_labels = torch.cat(ins_ind_labels)  # 继续cat
 
-        num_ins = flatten_ins_ind_labels.sum()
+        num_ins = flatten_ins_ind_labels.sum()  # 所有实例中心区域占的grid数量
 
         # dice loss
         loss_ins = []
         loss_ins_max = []
         loss_pairwise = []
-        for input, target, cur_image_color_similarity  in zip(ins_pred_list, ins_labels, image_color_similarity):
-            if input is None:
+        for input, target, cur_image_color_similarity in zip(ins_pred_list, ins_labels, image_color_similarity):
+            if input is None:  # grid的 pred_mask（由多层融合特征产生）, grid负责预测的实例的真实mask， color sim
                 continue
-            input_scores = torch.sigmoid(input)
-            box_target = target.max(dim=1, keepdim=True)[0].expand(-1, target.shape[1], -1) * target.max(dim=2, keepdim=True)[0].expand(-1, -1, target.shape[2])
+            input_scores = torch.sigmoid(input)  # 一层所有关心的gird的mask_pred，将其范围限制在(0-1)之间
+            box_target = target.max(dim=1, keepdim=True)[0].expand(-1, target.shape[1], -1) * \
+                         target.max(dim=2, keepdim=True)[0].expand(-1, -1, target.shape[2])  # 展示何处有该grid负责预测实例的真实mask
 
             mask_losses_y = dice_coefficient(
-                input_scores.max(dim=1, keepdim=True)[0],
-                target.max(dim=1, keepdim=True)[0]
+                input_scores.max(dim=1, keepdim=True)[0],  # 值
+                target.max(dim=1, keepdim=True)[0]  # 真实值只有0,1；与真实值为1的地方相乘，即期望该处预测值越接近1越好
             )
             mask_losses_x = dice_coefficient(
                 input_scores.max(dim=2, keepdim=True)[0],
                 target.max(dim=2, keepdim=True)[0]
             )
-            loss_ins_max.append((mask_losses_y + mask_losses_x).mean())  # max_proj loss
-
+            loss_ins_max.append((mask_losses_y + mask_losses_x).mean())  # max_proj loss, why not min_proj loss?
+            # we can flip the map and compute the min_proj loss
             mask_losses_y = dice_coefficient(
                 input_scores.mean(dim=1, keepdim=True),
                 target.float().mean(dim=1, keepdim=True),
@@ -416,10 +430,11 @@ class SOLOv2(nn.Module):
             pairwise_losses = compute_pairwise_term(
                 input[:, None, ...], self.pairwise_size,
                 self.pairwise_dilation
-            )
-            weights = (cur_image_color_similarity >= self.pairwise_color_thresh).float() * box_target[:, None, ...].float()
-            #weights = (image_color_similarity >= self.pairwise_color_thresh).float()
-            cur_loss_pairwise = (pairwise_losses * weights).sum() / weights.sum().clamp(min=1.0)
+            )  # 保持与color sim相同的采样率，进行对齐
+            weights = (cur_image_color_similarity >= self.pairwise_color_thresh).float() * box_target[:, None,...].float()
+            # weights = (image_color_similarity >= self.pairwise_color_thresh).float()，只计算有mask的地方
+            # 先计算8邻域loss，再乘阈值，去掉不关心（小于阈值）的地方的loss
+            cur_loss_pairwise = (pairwise_losses * weights).sum() / weights.sum().clamp(min=1.0)  # 均值
             warmup_factor = min(self._iter.item() / float(self._warmup_iters), 1.0)
             cur_loss_pairwise = cur_loss_pairwise * warmup_factor
             loss_pairwise.append(cur_loss_pairwise)  # pairwise loss
@@ -427,62 +442,61 @@ class SOLOv2(nn.Module):
         if not loss_ins_max:
             loss_ins_max = 0 * ins_pred.sum()
         else:
-            loss_ins_max = torch.stack(loss_ins_max).mean()
+            loss_ins_max = torch.stack(loss_ins_max).mean()  # 将5层平均，max_proj loss
             loss_ins_max = loss_ins_max * self.ins_loss_weight * 1.0
         if not loss_ins:
             loss_ins = 0 * ins_pred.sum()
         else:
-            loss_ins = torch.stack(loss_ins).mean()
+            loss_ins = torch.stack(loss_ins).mean()  # 将5层平均 avg_proj loss
             loss_ins = loss_ins * self.ins_loss_weight * 0.1
         if not loss_pairwise:
             loss_pairwise = 0 * ins_pred.sum()
         else:
             loss_pairwise = torch.stack(loss_pairwise).mean()  # 色彩空间loss
-            loss_pairwise =  1. * loss_pairwise
-
+            loss_pairwise = 1. * loss_pairwise
 
         # cate
         cate_labels = [
             torch.cat([cate_labels_level_img.flatten()
-                       for cate_labels_level_img in cate_labels_level])
-            for cate_labels_level in zip(*cate_label_list)
-        ]
+                       for cate_labels_level_img in cate_labels_level])  # （40,40）.flatten().cat
+            for cate_labels_level in zip(*cate_label_list)  # list_n, list_5, (40,40)(36,36)...取5次tuple_n
+        ]  # https://blog.csdn.net/sunjintaoxxx/article/details/120494465
         flatten_cate_labels = torch.cat(cate_labels)
         cate_preds = [
             cate_pred.permute(0, 2, 3, 1).reshape(-1, self.num_classes)
             for cate_pred in cate_preds
-        ]
+        ]  # 预测为前景背景的概率
         flatten_cate_preds = torch.cat(cate_preds)
         # prepare one_hot
         pos_inds = torch.nonzero((flatten_cate_labels != self.num_classes) & (flatten_cate_labels != -1)).squeeze(1)
-        num_ins = len(pos_inds)
+        num_ins = len(pos_inds)  # 有实例的grid索引及数量
 
         flatten_cate_labels_oh = torch.zeros_like(flatten_cate_preds)
-        flatten_cate_labels_oh[pos_inds, flatten_cate_labels[pos_inds]] = 1
+        flatten_cate_labels_oh[pos_inds, flatten_cate_labels[pos_inds]] = 1  # 有实例的grid索引及其class-->生成grid是前背景的one-hot-label
 
         if pseudo:
             flatten_cate_labels_oh = flatten_cate_labels_oh[pos_inds]
             flatten_cate_preds = flatten_cate_preds[pos_inds]
 
-        if len(flatten_cate_preds):
+        if len(flatten_cate_preds):  # 前背景的focal loss
             loss_cate = self.focal_loss_weight * sigmoid_focal_loss_jit(flatten_cate_preds, flatten_cate_labels_oh,
                                                                         gamma=self.focal_loss_gamma,
                                                                         alpha=self.focal_loss_alpha,
                                                                         reduction="sum") / (num_ins + 1)
         else:
-            loss_cate = 0 * flatten_cate_preds.sum()
+            loss_cate = 0 * flatten_cate_preds.sum()  # https://zhuanlan.zhihu.com/p/80594704
 
         emb_labels = [
             torch.cat([emb_labels_level_img.reshape(-1, self.num_embs)
                        for emb_labels_level_img in emb_labels_level])
             for emb_labels_level in zip(*emb_label_list)
-        ]
+        ]  # cat 每层的grid的emb
         flatten_emb_labels = torch.cat(emb_labels)
         emb_preds = [
             emb_pred.permute(0, 2, 3, 1).reshape(-1, self.num_embs)
             for emb_pred in emb_preds
         ]
-        flatten_emb_preds = torch.cat(emb_preds)
+        flatten_emb_preds = torch.cat(emb_preds)  # 预测的emb
 
         if num_ins:
             flatten_emb_labels = flatten_emb_labels[pos_inds]
@@ -497,7 +511,7 @@ class SOLOv2(nn.Module):
         return {'loss_ins': loss_ins,
                 'loss_ins_max': loss_ins_max,
                 'loss_pairwise': loss_pairwise,
-                'loss_emb': flatten_emb_preds.sum()*0.,  #
+                'loss_emb': flatten_emb_preds.sum() * 0.,  # 没有使用，
                 'loss_cate': loss_cate}  # focal loss of category
 
     @staticmethod
@@ -525,7 +539,7 @@ class SOLOv2(nn.Module):
             pred_kernel = [pred_kernels[i][img_idx].permute(1, 2, 0).view(-1, self.num_kernels).detach()
                            for i in range(num_ins_levels)]
             pred_emb = [pred_embs[i][img_idx].view(-1, self.num_embs).detach()
-                         for i in range(num_ins_levels)]
+                        for i in range(num_ins_levels)]
             pred_mask = pred_masks[img_idx, ...].unsqueeze(0)
 
             pred_cate = torch.cat(pred_cate, dim=0)
@@ -566,11 +580,11 @@ class SOLOv2(nn.Module):
         cate_labels = inds[:, 1]
         kernel_preds = kernel_preds[inds[:, 0]]
         emb_preds = emb_preds[inds[:, 0]]
-        
-        if keep_train_size: # used in self-training
+
+        if keep_train_size:  # used in self-training
             # sort and keep top nms_pre
             sort_inds = torch.argsort(cate_scores, descending=True)
-            max_pseudo_labels =self.max_before_nms
+            max_pseudo_labels = self.max_before_nms
             if len(sort_inds) > max_pseudo_labels:
                 sort_inds = sort_inds[:max_pseudo_labels]
             cate_scores = cate_scores[sort_inds]
@@ -621,7 +635,7 @@ class SOLOv2(nn.Module):
         # maskness.
         seg_masks = seg_preds > self.mask_threshold
         maskness = (seg_preds * seg_masks.float()).sum((1, 2)) / seg_masks.sum((1, 2))
-        
+
         scores = cate_scores * maskness
 
         # sort and keep top nms_pre
@@ -640,7 +654,7 @@ class SOLOv2(nn.Module):
         if self.nms_type == "matrix":
             # matrix nms & filter.
             scores = matrix_nms(cate_labels, seg_masks, sum_masks, scores,
-                                     sigma=self.nms_sigma, kernel=self.nms_kernel)
+                                sigma=self.nms_sigma, kernel=self.nms_kernel)
             keep = scores >= self.update_threshold
         elif self.nms_type == "mask":
             # original mask nms.
@@ -682,7 +696,7 @@ class SOLOv2(nn.Module):
         seg_preds = F.interpolate(seg_preds.unsqueeze(0),
                                   size=upsampled_size_out,
                                   mode='bilinear')[:, :, :h, :w]
-        if keep_train_size: # for self-training
+        if keep_train_size:  # for self-training
             seg_masks = seg_preds.squeeze(0)
         else:
             seg_masks = F.interpolate(seg_preds,
@@ -710,8 +724,8 @@ class SOLOv2(nn.Module):
         results.pred_embs = emb_preds / emb_preds.norm(dim=-1, keepdim=True)
 
         # get bbox from mask
-        #pred_boxes = torch.zeros(seg_masks.size(0), 4)
-        #for i in range(seg_masks.size(0)):
+        # pred_boxes = torch.zeros(seg_masks.size(0), 4)
+        # for i in range(seg_masks.size(0)):
         #    mask = seg_masks[i].squeeze()
         #    ys, xs = torch.where(mask)
         #    pred_boxes[i] = torch.tensor([xs.min(), ys.min(), xs.max(), ys.max()]).float()
@@ -721,7 +735,8 @@ class SOLOv2(nn.Module):
         width, height = width_proj.sum(1), height_proj.sum(1)
         center_ws, _ = center_of_mass(width_proj[:, None, :])
         _, center_hs = center_of_mass(height_proj[:, :, None])
-        pred_boxes = torch.stack([center_ws-0.5*width, center_hs-0.5*height, center_ws+0.5*width, center_hs+0.5*height], 1)
+        pred_boxes = torch.stack(
+            [center_ws - 0.5 * width, center_hs - 0.5 * height, center_ws + 0.5 * width, center_hs + 0.5 * height], 1)
         results.pred_boxes = Boxes(pred_boxes)
 
         return results
@@ -803,7 +818,7 @@ class SOLOv2InsHead(nn.Module):
         )
 
         if cfg.MODEL.SOLOV2.FREEZE:
-            #for modules in [self.cate_tower, self.kernel_tower, self.kernel_pred]:
+            # for modules in [self.cate_tower, self.kernel_tower, self.kernel_pred]:
             for modules in [self.cate_tower, self.kernel_tower]:
                 for p in modules.parameters():
                     p.requires_grad = False

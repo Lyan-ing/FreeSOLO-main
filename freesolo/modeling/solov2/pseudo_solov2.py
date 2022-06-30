@@ -94,7 +94,7 @@ class PseudoSOLOv2(SOLOv2):
         # ins_head
         # kernel_pred(256,40,40), (256,36,36), (256,24,24),(256,16,16), (256,12,12) 有坐标信息coord
         # cate_pred(2,40,40), (2,36,36), (2,24,24),(2,16,16), (2,12,12)  # 预测前景背景， 无坐标信息coord
-        # emb_pred(128,40,40), (128,36,36), (128,24,24),(128,16,16), (128,12,12)
+        # emb_pred(128,40,40), (128,36,36), (128,24,24),(128,16,16), (128,12,12)  没使用
 
         # mask_head
         # mask_pred(256, h,w) 融合了P2-P5的特征，只有P5融合了coord，hw为规范的尺寸
@@ -143,4 +143,4 @@ class PseudoSOLOv2(SOLOv2):
             if len(per_im_gt_inst) > 0:
                 per_im_gt_inst.image_color_similarity = torch.cat([
                     images_color_similarity for _ in range(len(per_im_gt_inst))
-                ], dim=0)  # 在ins属性中增加色彩相似度，与ins数量无关
+                ], dim=0)  # 在ins属性中增加色彩相似度，与ins数量无关，一张图像中每个实例的color sim相同
