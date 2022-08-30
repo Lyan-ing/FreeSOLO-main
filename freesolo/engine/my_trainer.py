@@ -30,7 +30,7 @@ from freesolo.data.build import (
 from freesolo.data.my_dataset_mapper import DatasetMapperTwoCropSeparate
 
 
-class BaselineTrainer(DefaultTrainer):
+class My_BaselineTrainer(DefaultTrainer):
     def __init__(self, cfg):
         """
         Args:
@@ -127,11 +127,27 @@ class BaselineTrainer(DefaultTrainer):
             print("Saving to {} ...".format(save_path))
             vis.save(save_path)
 
+        def convert_dimension(imgs):
+            img_h = int(imgs.shape[1] / 2)
+            ori_img = imgs[:, :img_h]
+            depth_map = imgs[:, img_h:]
+            re_img = torch.cat((ori_img, depth_map), axis=0)
+            return re_img
+
+        def de_convert_dimension(imgs):
+            ori_img = imgs[:3, ]
+            depth_map = imgs[3:, ]
+            re_img = torch.cat((ori_img, depth_map), axis=1)
+            return re_img
+
         for cur_labeled_data, cur_unlabeled_data in zip(labeled_data, unlabeled_data):  # 一张张读取
             cur_labeled_instances = cur_labeled_data["instances"]
             cur_labeled_image = cur_labeled_data["image"]
             cur_unlabeled_instances = cur_unlabeled_data["instances"]
             cur_unlabeled_image = cur_unlabeled_data["image"]
+            if self.cfg.MODEL.SOLOV2.USE_DEPTH:
+                cur_labeled_image = convert_dimension(cur_labeled_image)
+                cur_unlabeled_image = convert_dimension(cur_unlabeled_image)
 
             num_labeled_instances = len(cur_labeled_instances)
             num_copy = np.random.randint(max(1, num_labeled_instances + 1))  # 随机取0，1...num_labeled_ins个
@@ -160,12 +176,15 @@ class BaselineTrainer(DefaultTrainer):
                     # merge image
                     alpha = alpha.cpu()
                     composited_image = (alpha * cur_labeled_image) + (~alpha * cur_unlabeled_image)
+                    if self.cfg.MODEL.SOLOV2.USE_DEPTH:
+                        composited_image = de_convert_dimension(composited_image)
                     cur_unlabeled_data["image"] = composited_image
                     cur_unlabeled_data["instances"] = copied_instances
                 else:
                     # remove the copied object if iou greater than 0.5
                     iou_matrix = mask_iou_matrix(copied_masks.tensor, cur_unlabeled_instances.gt_masks.tensor,
                                                  mode='ioy')  # nxN
+                    # print(iou_matrix)
                     keep = iou_matrix.max(1)[0] < 0.5  # [0]表示最大值，[1]表示最大值的索引
                     if keep.sum() == 0:  # 如果全为false，即k图中每个实例与q的每个实例最大iou都大于0.5，就不mix
                         new_unlabeled_data.append(cur_unlabeled_data)  # 原图，不经过mix
@@ -181,9 +200,12 @@ class BaselineTrainer(DefaultTrainer):
                     merged_instances = Instances.cat([cur_unlabeled_instances, copied_instances])
                     # update boxes
                     merged_instances.gt_boxes = merged_instances.gt_masks.get_bounding_boxes()
-
+                    if self.cfg.MODEL.SOLOV2.USE_DEPTH:
+                        composited_image = de_convert_dimension(composited_image)
                     cur_unlabeled_data["image"] = composited_image
                     cur_unlabeled_data["instances"] = merged_instances
+                    import torchshow
+                    torchshow.save(composited_image,"./conbine.png")
                 # visualize_data(cur_unlabeled_data, self.cfg, save_path = './sample_{}.jpg'.format(np.random.randint(10)))
                 new_unlabeled_data.append(cur_unlabeled_data)
         return new_unlabeled_data

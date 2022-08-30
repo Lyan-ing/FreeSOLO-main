@@ -291,14 +291,14 @@ class SOLOv2(nn.Module):
                 if not valid_mask_flag:  # 该循环处理每个mask
                     continue
                 upsampled_size = (mask_feat_size[0] * 4, mask_feat_size[1] * 4)  # 每个batch的标准尺寸
-                coord_w = int((center_w / upsampled_size[1]) // (1. / num_grid))  # 取整
-                coord_h = int((center_h / upsampled_size[0]) // (1. / num_grid))  # 该实例mask中心点的grid_index
+                coord_w = int((center_w / upsampled_size[1]) * num_grid)  # 取整
+                coord_h = int((center_h / upsampled_size[0]) * num_grid)  # 该实例mask中心点的grid_index
 
                 # left, top, right, down
-                top_box = max(0, int(((center_h - half_h) / upsampled_size[0]) // (1. / num_grid)))  # bbox中心区域的grid_idx
-                down_box = min(num_grid - 1, int(((center_h + half_h) / upsampled_size[0]) // (1. / num_grid)))
-                left_box = max(0, int(((center_w - half_w) / upsampled_size[1]) // (1. / num_grid)))
-                right_box = min(num_grid - 1, int(((center_w + half_w) / upsampled_size[1]) // (1. / num_grid)))
+                top_box = max(0, int(((center_h - half_h) / upsampled_size[0]) * num_grid))  # bbox中心区域的grid_idx
+                down_box = min(num_grid - 1, int(((center_h + half_h) / upsampled_size[0])* num_grid))
+                left_box = max(0, int(((center_w - half_w) / upsampled_size[1]) * num_grid))
+                right_box = min(num_grid - 1, int(((center_w + half_w) / upsampled_size[1]) * num_grid))
 
                 top = max(top_box, coord_h - 1)
                 down = min(down_box, coord_h + 1)

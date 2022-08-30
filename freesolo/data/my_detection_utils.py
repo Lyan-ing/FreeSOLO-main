@@ -1,16 +1,16 @@
 import logging
 
-import numpy as np
-import torch
-
-from detectron2.data import transforms as T
-from adet.data.my_augmentation_impl import ResizeShortestEdge, RandomFlip
-from detectron2.data.detection_utils import \
-    annotations_to_instances as d2_anno_to_inst
-from detectron2.data.detection_utils import \
-    transform_instance_annotations as d2_transform_inst_anno
-
-import math
+# import numpy as np
+# import torch
+#
+# from detectron2.data import transforms as T
+from .my_augmentation_impl import ResizeShortestEdge, RandomFlip
+# from detectron2.data.detection_utils import \
+#     annotations_to_instances as d2_anno_to_inst
+# from detectron2.data.detection_utils import \
+#     transform_instance_annotations as d2_transform_inst_anno
+#
+# import math
 
 # def my_transform_instance_annotations(
 #     annotation, transforms, image_size, *, keypoint_hflip_indices=None
@@ -94,7 +94,7 @@ def my_build_augmentation(cfg, is_train):
     augmentation = []
     augmentation.append(ResizeShortestEdge(min_size, max_size, sample_style))
     if is_train:
-        if cfg.INPUT.HFLIP_TRAIN:
+        if cfg.INPUT.RANDOM_FLIP != "none":
             augmentation.append(RandomFlip())
         logger.info("Augmentations used in training: " + str(augmentation))
     return augmentation  # ori data aug: resize and flip

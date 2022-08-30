@@ -39,19 +39,25 @@ import torch.nn.functional as F
 from detectron2.modeling.meta_arch.build import META_ARCH_REGISTRY
 from detectron2.structures import ImageList
 
-from .solov2 import SOLOv2
+from .my_solov2 import My_SOLOv2
 from .utils import point_nms, matrix_nms, get_images_color_similarity
 from .loss import dice_loss, FocalLoss
+from torchvision.utils import draw_bounding_boxes
+import torchshow as ts
 
 
 @META_ARCH_REGISTRY.register()
-class PseudoSOLOv2(SOLOv2):
+class My_PseudoSOLOv2(My_SOLOv2):
     def forward(
             self, batched_inputs, branch="supervised", given_proposals=None, val_mode=False
     ):
 
-        original_images = [x["image"].to(self.device) for x in batched_inputs]  # 经过数据增强的图
-        images = self.preprocess_image(batched_inputs)  # Normalize, pad and batch the input images.变为统一大小
+        # original_images = [x["image"].to(self.device) for x in batched_inputs]  # 经过数据增强的图
+        # tmp_img = batched_inputs[0]["image"]
+        # tmp_box = batched_inputs[0]['instances'].gt_boxes[0]
+        # result = draw_bounding_boxes(tmp_img.cpu(), tmp_box.tensor, colors=["red"], width=2)
+        # ts.save(result, './test1.png')
+        images, depth_prediction, original_images = self.preprocess_image(batched_inputs)  # Normalize, pad and batch the input images.变为统一大小
 
         features = self.backbone(images.tensor)  # P2-P6
         if self.is_freemask:
@@ -74,10 +80,23 @@ class PseudoSOLOv2(SOLOv2):
             original_image_masks = ImageList.from_tensors(
                 original_image_masks, self.backbone.size_divisibility, pad_value=0.0
             )  # 标准化image_mask（表示何处为真实图像，何处为padding的0）
-            self.add_bitmasks_from_boxes(
-                gt_instances, original_images.tensor, original_image_masks.tensor,
-                original_images.tensor.size(-2), original_images.tensor.size(-1)
-            )  # (gt_ins, ori_img, ori_mask,h,w)-->用来处理生成color sim
+
+            # self.add_bitmasks_from_boxes(
+            #     gt_instances, original_images.tensor, original_image_masks.tensor,
+            #     original_images.tensor.size(-2), original_images.tensor.size(-1)
+            # )  # (gt_ins, ori_img, ori_mask,h,w)-->用来处理生成color sim
+
+            if self.use_depth and self.training:
+                self.add_bitmasks_from_boxes(
+                    gt_instances, original_images.tensor, original_image_masks.tensor,
+                    original_images.tensor.size(-2), original_images.tensor.size(-1), depth_prediction=depth_prediction
+                )
+            else:
+                self.add_bitmasks_from_boxes(
+                    gt_instances, original_images.tensor, original_image_masks.tensor,
+                    original_images.tensor.size(-2), original_images.tensor.size(-1),
+                    depth_prediction=None
+                )
         else:
             gt_instances = None
 
@@ -110,10 +129,10 @@ class PseudoSOLOv2(SOLOv2):
         elif branch == "supervised":
             mask_feat_size = mask_pred.size()[-2:]
             targets = self.get_ground_truth(gt_instances, mask_feat_size)  # gt尺寸并不规范，输入规范尺存
-            losses = self.loss(cate_pred, kernel_pred, emb_pred, mask_pred, targets)
+            losses = self.loss(cate_pred, kernel_pred, emb_pred, mask_pred, targets, depth_prediction=depth_prediction)
             return losses
 
-    def add_bitmasks_from_boxes(self, instances, images, image_masks, im_h, im_w):
+    def add_bitmasks_from_boxes(self, instances, images, image_masks, im_h, im_w, depth_prediction=None):
         stride = 4
         start = int(stride // 2)
 
@@ -135,6 +154,11 @@ class PseudoSOLOv2(SOLOv2):
                 self.pairwise_size, self.pairwise_dilation
             )  # BoxInst
 
+            if depth_prediction is not None:
+                image_depth_similarity = get_images_color_similarity(
+                    depth_prediction[im_i].unsqueeze(0), image_masks[im_i],
+                    self.pairwise_size, self.pairwise_dilation
+                )
             per_im_boxes = per_im_gt_inst.gt_boxes.tensor
             per_im_bitmasks = []
             per_im_bitmasks_full = []
@@ -144,3 +168,8 @@ class PseudoSOLOv2(SOLOv2):
                 per_im_gt_inst.image_color_similarity = torch.cat([
                     images_color_similarity for _ in range(len(per_im_gt_inst))
                 ], dim=0)  # 在ins属性中增加色彩相似度，与ins数量无关，一张图像中每个实例的color sim相同
+
+                if depth_prediction is not None:
+                    per_im_gt_inst.image_depth_similarity = torch.cat([
+                        image_depth_similarity for _ in range(len(per_im_gt_inst))
+                    ], dim=0)

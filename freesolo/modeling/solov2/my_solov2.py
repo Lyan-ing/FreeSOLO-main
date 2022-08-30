@@ -50,11 +50,11 @@ from fvcore.nn import sigmoid_focal_loss_jit
 from .utils import imrescale, center_of_mass, point_nms, mask_nms, matrix_nms, dice_coefficient, compute_pairwise_term
 from .loss import dice_loss, FocalLoss
 
-__all__ = ["SOLOv2"]
+__all__ = ["My_SOLOv2"]
 
 
 @META_ARCH_REGISTRY.register()
-class SOLOv2(nn.Module):
+class My_SOLOv2(nn.Module):
     """
     SOLOv2 model. Creates FPN backbone, instance branch for kernels and categories prediction,
     mask branch for unified mask features.
@@ -133,6 +133,11 @@ class SOLOv2(nn.Module):
         self.pairwise_color_thresh = 0.3
         self._warmup_iters = 1000
         self.register_buffer("_iter", torch.zeros([1]))
+        self.use_depth = cfg.MODEL.SOLOV2.USE_DEPTH
+        self.pairwise_depth_thresh = cfg.MODEL.SOLOV2.DEPTH_SIM_THRESH
+        self.bg_depth = cfg.MODEL.SOLOV2.LOSS.BG
+        self.hpyer_parameters = cfg.MODEL.SOLOV2.LOSS.HYPERS
+        self.depth_with_box = cfg.MODEL.SOLOV2.LOSS.DEPTH_WITH_BOX
 
         # image transform
         pixel_mean = torch.Tensor(cfg.MODEL.PIXEL_MEAN).to(self.device).view(3, 1, 1)
@@ -198,18 +203,43 @@ class SOLOv2(nn.Module):
         """
         Normalize, pad and batch the input images.
         """
-        images = [x["image"].to(self.device) for x in batched_inputs]
-        images = [self.normalizer(x) for x in images]
-        images = ImageList.from_tensors(images, self.backbone.size_divisibility)
-        return images
+        if self.use_depth and self.training:
+            original_images = []
+            depth_maps = []
+            for i in range(len(batched_inputs)):
+                ori_h = int(batched_inputs[i]["image"].size()[-2] / 2)
+                ori_image = batched_inputs[i]["image"][:, :ori_h]
+                depth_map = batched_inputs[i]["image"][0, ori_h:].unsqueeze(0)  # dimension
+                original_images.append(ori_image.to(self.device))
+                depth_maps.append(depth_map.to(self.device))
+            images_norm = [self.normalizer(x) for x in original_images]
+            images_norm = ImageList.from_tensors(images_norm, self.backbone.size_divisibility)  # 图像尺度归一化
+            # real_h = images_norm.tensor.size()[2] / 2
+            depth_maps_norm = ImageList.from_tensors(depth_maps, self.backbone.size_divisibility)
+
+            # depth_map = images_norm.tensor[3:4]
+            depth_prediction = F.avg_pool2d(
+                depth_maps_norm.tensor.float(), kernel_size=4,
+                stride=4, padding=0
+            )
+        else:
+            original_images = [x["image"].to(self.device) for x in batched_inputs]
+            images_norm = [self.normalizer(x) for x in original_images]
+            images_norm = ImageList.from_tensors(images_norm, self.backbone.size_divisibility)
+            depth_prediction = None
+        return images_norm, depth_prediction, original_images
 
     @torch.no_grad()
     def get_ground_truth(self, gt_instances, mask_feat_size=None):  # 生成一个batch的FPN的GT
         ins_label_list, cate_label_list, ins_ind_label_list, grid_order_list, cate_soft_label_list = [], [], [], [], []
-        if len(gt_instances) and gt_instances[0].has('image_color_similarity'):   # get the color sim of each images
+        if len(gt_instances) and gt_instances[0].has('image_color_similarity'):  # get the color sim of each images
             image_color_similarity_list = [gt_instance.image_color_similarity for gt_instance in gt_instances]
         else:
             image_color_similarity_list = []
+        if len(gt_instances) and gt_instances[0].has('image_depth_similarity'):  # get the depth sim of each images
+            image_depth_similarity_list = [gt_instance.image_depth_similarity for gt_instance in gt_instances]
+        else:
+            image_depth_similarity_list = []
 
         for img_idx in range(len(gt_instances)):  # 一张一张图来，每张图的大小不同，需单独处理（内部ins大小也不同）
             cur_ins_label_list, cur_cate_label_list, cur_ins_ind_label_list, cur_grid_order_list, cur_cate_soft_label_list = \
@@ -219,7 +249,7 @@ class SOLOv2(nn.Module):
             ins_ind_label_list.append(cur_ins_ind_label_list)
             grid_order_list.append(cur_grid_order_list)
             cate_soft_label_list.append(cur_cate_soft_label_list)
-        return ins_label_list, cate_label_list, ins_ind_label_list, grid_order_list, cate_soft_label_list, image_color_similarity_list
+        return ins_label_list, cate_label_list, ins_ind_label_list, grid_order_list, cate_soft_label_list, image_color_similarity_list, image_depth_similarity_list
 
     def get_ground_truth_single(self, img_idx, gt_instances, mask_feat_size):  # idx， ins信息(未经规范化)， mask_pred尺寸
         gt_bboxes_raw = gt_instances[img_idx].gt_boxes.tensor  # bbox (ins_num, 4)
@@ -296,7 +326,7 @@ class SOLOv2(nn.Module):
 
                 # left, top, right, down
                 top_box = max(0, int(((center_h - half_h) / upsampled_size[0]) * num_grid))  # bbox中心区域的grid_idx
-                down_box = min(num_grid - 1, int(((center_h + half_h) / upsampled_size[0])* num_grid))
+                down_box = min(num_grid - 1, int(((center_h + half_h) / upsampled_size[0]) * num_grid))
                 left_box = max(0, int(((center_w - half_w) / upsampled_size[1]) * num_grid))
                 right_box = min(num_grid - 1, int(((center_w + half_w) / upsampled_size[1]) * num_grid))
 
@@ -330,9 +360,9 @@ class SOLOv2(nn.Module):
             emb_label_list.append(emb_label)  # 每个尺度的feature都分成(n,n)个gird,分别嵌入ins类别的emb(soft labels)
         return ins_label_list, cate_label_list, ins_ind_label_list, grid_order_list, emb_label_list
 
-    def loss(self, cate_preds, kernel_preds, emb_preds, ins_pred, targets, pseudo=False):
+    def loss(self, cate_preds, kernel_preds, emb_preds, ins_pred, targets, pseudo=False, depth_prediction=None):
         self._iter += 1
-        ins_label_list, cate_label_list, ins_ind_label_list, grid_order_list, emb_label_list, image_color_similarity_list = targets
+        ins_label_list, cate_label_list, ins_ind_label_list, grid_order_list, emb_label_list, image_color_similarity_list, image_depth_similarity_list = targets
 
         # ins list 5:(n, h, w), n为当前batch当前层实例中心区域占的所有grid数，该grid负责预测的实例的真实mask，同一个实例可能由多个grid预测，他们的mask一样
         ins_labels = [torch.cat([ins_labels_level_img
@@ -351,15 +381,18 @@ class SOLOv2(nn.Module):
         else:
             image_color_similarity = ins_labels.copy()
 
-        # def ker_pred (k_p, grid_list):
-        #     kernel_pred = []
-        #     for kernel_preds_level, grid_orders_level in zip(k_p, zip(*grid_list)):  # 5*(n, 256, 40, 40), n*(5)-->(n, 256, 40, 40), n
-        #         for kernel_preds_level_img, grid_orders_level_img in zip(kernel_preds_level, grid_orders_level):  # (256, 40, 40),(1ist一张图某层的所有实例的中心区域序号)
-        #             a = kernel_preds_level_img.view(kernel_preds_level_img.shape[0], -1)[:, grid_orders_level_img]
-        #             kernel_pred.append(a)  # 获取中心区域grid对应的kernel_pred, list_n*5, 256, grid_num
-        #     print("111")
-        #     return kernel_pred
-        # pp = ker_pred(kernel_preds, grid_order_list)
+        if len(image_depth_similarity_list):
+            image_depth_similarity = []  # 所有层所有img的color sim 拼接
+            for level_idx in range(len(ins_label_list[0])):  # 5 P2-P6
+                level_image_depth_similarity = []  # 每层所有img的color sim 拼接
+                for img_idx in range(len(ins_label_list)):  # batch size*2
+                    num = ins_label_list[img_idx][level_idx].shape[0]
+                    cur_image_depth_sim = image_depth_similarity_list[img_idx][[0]].expand(num, -1, -1, -1)  # sim of
+                    # each img，一张图的每个ins的sim相同，只取第一个
+                    level_image_depth_similarity.append(cur_image_depth_sim)
+                image_depth_similarity.append(torch.cat(level_image_depth_similarity))
+        else:
+            image_depth_similarity = ins_labels.copy()
 
         kernel_preds = [[kernel_preds_level_img.view(kernel_preds_level_img.shape[0], -1)[:, grid_orders_level_img]
                          for kernel_preds_level_img, grid_orders_level_img in
@@ -400,7 +433,10 @@ class SOLOv2(nn.Module):
         loss_ins = []
         loss_ins_max = []
         loss_pairwise = []
-        for input, target, cur_image_color_similarity in zip(ins_pred_list, ins_labels, image_color_similarity):
+        loss_pairwise_depth = []
+        for input, target, cur_image_color_similarity, cur_image_depth_similarity in zip(ins_pred_list, ins_labels,
+                                                                                         image_color_similarity,
+                                                                                         image_depth_similarity):
             if input is None:  # grid的 pred_mask（由多层融合特征产生）, grid负责预测的实例的真实mask， color sim
                 continue
             input_scores = torch.sigmoid(input)  # 一层所有关心的gird的mask_pred，将其范围限制在(0-1)之间
@@ -431,13 +467,29 @@ class SOLOv2(nn.Module):
                 input[:, None, ...], self.pairwise_size,
                 self.pairwise_dilation
             )  # 保持与color sim相同的采样率，进行对齐
-            weights = (cur_image_color_similarity >= self.pairwise_color_thresh).float() * box_target[:, None,...].float()
+            weights = (cur_image_color_similarity >= self.pairwise_color_thresh).float() * box_target[:, None,
+                                                                                           ...].float()
             # weights = (image_color_similarity >= self.pairwise_color_thresh).float()，只计算有mask的地方
             # 先计算8邻域loss，再乘阈值，去掉不关心（小于阈值）的地方的loss
             cur_loss_pairwise = (pairwise_losses * weights).sum() / weights.sum().clamp(min=1.0)  # 均值
             warmup_factor = min(self._iter.item() / float(self._warmup_iters), 1.0)
-            cur_loss_pairwise = cur_loss_pairwise * warmup_factor
+            cur_loss_pairwise = cur_loss_pairwise * warmup_factor * self.hpyer_parameters[0]
             loss_pairwise.append(cur_loss_pairwise)  # pairwise loss
+
+            if self.pairwise_depth_thresh:
+                depth_weights = (cur_image_depth_similarity >= self.pairwise_depth_thresh).float()
+                if self.depth_with_box:
+                    depth_weights = depth_weights * box_target[:, None, ...].float()
+                # weights = (image_color_similarity >= self.pairwise_color_thresh).float()，只计算有mask的地方
+                # 先计算8邻域loss，再乘阈值，去掉不关心（小于阈值）的地方的loss
+                cur_loss_pairwise_depth = (pairwise_losses * depth_weights).sum() / depth_weights.sum().clamp(
+                    min=1.0)  # 均值
+                # warmup_factor = min(self._iter.item() / float(self._warmup_iters), 1.0)
+                cur_loss_pairwise_depth = cur_loss_pairwise_depth * warmup_factor * self.hpyer_parameters[1]
+                loss_pairwise_depth.append(cur_loss_pairwise_depth)  # pairwise loss
+            # else:
+
+            # if self.use_depth:
 
         if not loss_ins_max:
             loss_ins_max = 0 * ins_pred.sum()
@@ -455,13 +507,19 @@ class SOLOv2(nn.Module):
             loss_pairwise = torch.stack(loss_pairwise).mean()  # 色彩空间loss
             loss_pairwise = 1. * loss_pairwise
 
+        if not loss_pairwise_depth:
+            loss_pairwise_depth = 0 * ins_pred.sum()
+        else:
+            loss_pairwise_depth = torch.stack(loss_pairwise_depth).mean()  # 深度loss
+            loss_pairwise_depth = 1. * loss_pairwise_depth
+
         # cate
         cate_labels = [
             torch.cat([cate_labels_level_img.flatten()
                        for cate_labels_level_img in cate_labels_level])  # （40,40）.flatten().cat
             for cate_labels_level in zip(*cate_label_list)  # list_n, list_5, (40,40)(36,36)...取5次tuple_n
         ]  # https://blog.csdn.net/sunjintaoxxx/article/details/120494465
-        flatten_cate_labels = torch.cat(cate_labels)
+        flatten_cate_labels = (torch.cat(cate_labels))
         cate_preds = [
             cate_pred.permute(0, 2, 3, 1).reshape(-1, self.num_classes)
             for cate_pred in cate_preds
@@ -472,7 +530,8 @@ class SOLOv2(nn.Module):
         num_ins = len(pos_inds)  # 有实例的grid索引及数量
 
         flatten_cate_labels_oh = torch.zeros_like(flatten_cate_preds)
-        flatten_cate_labels_oh[pos_inds, flatten_cate_labels[pos_inds]] = 1  # 有实例的grid索引及其class-->生成grid是前背景的one-hot-label
+        flatten_cate_labels_oh[pos_inds, flatten_cate_labels[pos_inds]] = 1
+        # 有实例的grid索引及其class-->生成grid是前背景的one-hot-label
 
         if pseudo:
             flatten_cate_labels_oh = flatten_cate_labels_oh[pos_inds]
@@ -485,6 +544,14 @@ class SOLOv2(nn.Module):
                                                                         reduction="sum") / (num_ins + 1)
         else:
             loss_cate = 0 * flatten_cate_preds.sum()  # https://zhuanlan.zhihu.com/p/80594704
+
+        if self.bg_depth:
+            depth_prediction = depth_prediction[:, :, ::2, ::2]
+            feature_depth_matrix = (depth_prediction < self.bg_depth).float()
+            depth_norm = (self.bg_depth - depth_prediction) / self.bg_depth
+            loss_feature_depth = (feature_depth_matrix * depth_norm * ins_pred.mean(1,
+                                                                                    True).sigmoid()).sum() / feature_depth_matrix.sum().clamp(
+                min=1)
 
         emb_labels = [
             torch.cat([emb_labels_level_img.reshape(-1, self.num_embs)
@@ -508,9 +575,13 @@ class SOLOv2(nn.Module):
         else:
             loss_emb = 0 * flatten_emb_preds.sum()
 
+        if not self.pairwise_depth_thresh:
+            loss_pairwise_depth = 0
+
         return {'loss_ins': loss_ins,
                 'loss_ins_max': loss_ins_max,
                 'loss_pairwise': loss_pairwise,
+                'loss_pairwise_depth': loss_pairwise_depth,
                 'loss_emb': flatten_emb_preds.sum() * 0.,  # 没有使用，
                 'loss_cate': loss_cate}  # focal loss of category
 
@@ -990,7 +1061,8 @@ class SOLOv2MaskHead(nn.Module):
                 coord_feat = torch.cat([x, y], 1)
                 mask_feat = torch.cat([mask_feat, coord_feat], 1)
             # add for top features.
-            feature_add_all_level += self.convs_all_levels[i](mask_feat)
+            # feature_add_all_level += self.convs_all_levels[i](mask_feat)
+            feature_add_all_level = feature_add_all_level + self.convs_all_levels[i](mask_feat)
 
         mask_pred = self.conv_pred(feature_add_all_level)
         return mask_pred

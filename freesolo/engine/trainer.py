@@ -27,7 +27,7 @@ from detectron2.utils.env import TORCH_VERSION
 from freesolo.data.build import (
     build_detection_semisup_train_loader_two_crops,
 )
-from freesolo.data.dataset_mapper import DatasetMapperTwoCropSeparate
+from freesolo.data.my_dataset_mapper import DatasetMapperTwoCropSeparate
 
 
 class BaselineTrainer(DefaultTrainer):
@@ -193,6 +193,9 @@ class BaselineTrainer(DefaultTrainer):
 
         assert self.model.training, "[SimpleTrainer] model was changed to eval mode!"
         start = time.perf_counter()
+        # if comm.is_main_process():
+        #     # self.model.
+        #     self.checkpointer.save("last_epoch_ckpt")
 
         data = next(self._trainer._data_loader_iter)
         data_q, data_k = data

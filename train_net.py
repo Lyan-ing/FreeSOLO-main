@@ -29,18 +29,19 @@
 #
 # Modified by Xinlong Wang
 # -------------------------------------------------------------------------
-
+import torch
 import detectron2.utils.comm as comm
 from detectron2.checkpoint import DetectionCheckpointer
 from detectron2.config import get_cfg
 from detectron2.engine import default_argument_parser, default_setup, launch
 
 from freesolo import add_solo_config
-from freesolo.engine.trainer import BaselineTrainer
+from freesolo.engine.my_trainer import My_BaselineTrainer
 
 # hacky way to register
 import freesolo.data.datasets.builtin
-from freesolo.modeling.solov2 import PseudoSOLOv2
+from freesolo.modeling.solov2 import My_PseudoSOLOv2
+from freesolo import my_eval_cocoapi
 
 
 def setup(args):
@@ -58,7 +59,7 @@ def setup(args):
 
 def main(args):
     cfg = setup(args)
-    Trainer = BaselineTrainer
+    Trainer = My_BaselineTrainer
     # print('\n******************************')
 
     if args.eval_only:
@@ -68,9 +69,11 @@ def main(args):
             # resume_or_lord(path, whether_resume)
         )
         res = Trainer.test(cfg, model)
+        my_eval_cocoapi.eval_my_coco(cfg)
         return res
 
     trainer = Trainer(cfg)
+    # trainer.checkpointer.save("last_epoch_ckpt", )
     trainer.resume_or_load(resume=args.resume)  # false
 
     return trainer.train()

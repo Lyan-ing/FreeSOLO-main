@@ -44,6 +44,7 @@ from detectron2.data.dataset_mapper import DatasetMapper
 
 from freesolo.data.detection_utils import build_strong_augmentation
 from freesolo.data.detection_utils import annotations_to_instances
+from .my_detection_utils import my_build_augmentation
 
 
 class DatasetMapperTwoCropSeparate(DatasetMapper):
@@ -81,6 +82,7 @@ class DatasetMapperTwoCropSeparate(DatasetMapper):
         else:
             self.compute_tight_boxes = False
         self.strong_augmentation = build_strong_augmentation(cfg, is_train)
+        self.my_augmentation = my_build_augmentation(cfg, is_train)
 
         # fmt: off
         self.img_format = cfg.INPUT.FORMAT
@@ -88,6 +90,7 @@ class DatasetMapperTwoCropSeparate(DatasetMapper):
         self.mask_format = cfg.INPUT.MASK_FORMAT
         self.keypoint_on = cfg.MODEL.KEYPOINT_ON
         self.load_proposals = cfg.MODEL.LOAD_PROPOSALS
+        self.use_depth = cfg.MODEL.SOLOV2.USE_DEPTH
         # fmt: on
         if self.keypoint_on and is_train:
             self.keypoint_hflip_indices = utils.create_keypoint_hflip_indices(
@@ -125,17 +128,35 @@ class DatasetMapperTwoCropSeparate(DatasetMapper):
         else:
             sem_seg_gt = None
 
-        aug_input = T.StandardAugInput(image, sem_seg=sem_seg_gt)  # StandardAugInput = AugInput
-        transforms = aug_input.apply_augmentations(self.augmentation)
+        if self.use_depth and self.is_train:
+            file_root = dataset_dict["file_name"]
+            depth_root = (file_root.replace('val', 'depth_val')).replace('jpg', 'png')  # train
+            depth_map = utils.read_image(depth_root, format=self.img_format)
+            image = np.concatenate((image, depth_map), axis=0)
+            aug_input = T.StandardAugInput(image, sem_seg=sem_seg_gt)
+            transforms = aug_input.apply_augmentations(self.my_augmentation)
+        else:
+            aug_input = T.StandardAugInput(image, sem_seg=sem_seg_gt)
+            transforms = aug_input.apply_augmentations(self.augmentation)
+
+        # aug_input = T.StandardAugInput(image, sem_seg=sem_seg_gt)  # StandardAugInput = AugInput
+        # transforms = aug_input.apply_augmentations(self.augmentation)
+
         image_weak_aug, sem_seg_gt = aug_input.image, aug_input.sem_seg
-        image_shape = image_weak_aug.shape[:2]  # h, w
+        # image_shape = image_weak_aug.shape[:2]  # h, w
+        if self.use_depth and self.is_train:
+            image_shape_real = (int(image_weak_aug.shape[0] / 2), image_weak_aug.shape[1])
+            transforms.transforms[0].new_h = int(transforms.transforms[0].new_h/2)
+            transforms.transforms[0].h = int(transforms.transforms[0].h / 2)
+        else:
+            image_shape_real = (image_weak_aug.shape[0], image_weak_aug.shape[1])
 
         if sem_seg_gt is not None:
             dataset_dict["sem_seg"] = torch.as_tensor(sem_seg_gt.astype("long"))
         if self.load_proposals:
             utils.transform_proposals(
                 dataset_dict,
-                image_shape,
+                image_shape_real,
                 transforms,
                 proposal_topk=self.proposal_topk,
                 min_box_size=self.proposal_min_box_size,
@@ -157,14 +178,14 @@ class DatasetMapperTwoCropSeparate(DatasetMapper):
                 utils.transform_instance_annotations(
                     obj,
                     transforms,
-                    image_shape,
+                    image_shape_real,
                     keypoint_hflip_indices=self.keypoint_hflip_indices,
                 )
                 for obj in dataset_dict.pop("annotations")
                 if obj.get("iscrowd", 0) == 0
             ]
             instances = annotations_to_instances(
-                annos, image_shape, mask_format=self.mask_format
+                annos, image_shape_real, mask_format=self.mask_format
             )  # 返回每张图的instance
 
             if self.compute_tight_boxes and instances.has("gt_masks"):
@@ -177,11 +198,14 @@ class DatasetMapperTwoCropSeparate(DatasetMapper):
         # We use torchvision augmentation, which is not compatiable with
         # detectron2, which use numpy format for images. Thus, we need to
         # convert to PIL format first.
-        image_pil = Image.fromarray(image_weak_aug.astype("uint8"), "RGB")
-        image_strong_aug = np.array(self.strong_augmentation(image_pil))  # apply strong augmentation
+        image_pil = Image.fromarray(image_weak_aug[:image_shape_real[0]].astype("uint8"), "RGB")
+        image_strong_aug = np.array(self.strong_augmentation(image_pil))  # apply strong augmentation，需要提前把原图拆出来
+        if self.use_depth and self.is_train:
+            image_strong_aug = np.concatenate((image_strong_aug, image_weak_aug[image_shape_real[0]:]), axis=0)
+
         dataset_dict["image"] = torch.as_tensor(
             np.ascontiguousarray(image_strong_aug.transpose(2, 0, 1))
-        )  # strong aug not change the img size and retain the mask, bbox of weak aug imgs
+        )  # strong aug not change the img size and retain the mask and bbox of weak aug imgs
 
         dataset_dict_key = copy.deepcopy(dataset_dict)
         dataset_dict_key["image"] = torch.as_tensor(
@@ -189,4 +213,4 @@ class DatasetMapperTwoCropSeparate(DatasetMapper):
         )
         assert dataset_dict["image"].size(1) == dataset_dict_key["image"].size(1)
         assert dataset_dict["image"].size(2) == dataset_dict_key["image"].size(2)
-        return dataset_dict, dataset_dict_key  # data_q, data_k
+        return dataset_dict, dataset_dict_key  # data_q, data_k(weak)
