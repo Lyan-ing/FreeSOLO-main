@@ -6,3 +6,5 @@
 
 from .solov2 import SOLOv2
 from .pseudo_solov2 import PseudoSOLOv2
+from .my_solov2 import My_SOLOv2
+from .my_pseudo_solov2 import My_PseudoSOLOv2

@@ -93,4 +93,9 @@ def add_solo_config(cfg):
 
     # Flag for Free Mask
     _C.MODEL.SOLOV2.IS_FREEMASK = False
+    _C.MODEL.SOLOV2.USE_DEPTH = True
+    _C.MODEL.SOLOV2.DEPTH_SIM_THRESH = 0.9
+    _C.MODEL.SOLOV2.LOSS.BG = 0.0
+    _C.MODEL.SOLOV2.LOSS.HYPERS = [1.0, 0.5, 1.0, 5.0]
+    _C.MODEL.SOLOV2.LOSS.DEPTH_WITH_BOX = True
 

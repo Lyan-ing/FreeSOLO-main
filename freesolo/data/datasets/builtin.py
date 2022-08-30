@@ -150,8 +150,8 @@ register_coco_instances("uvo_val",
                         os.path.join(_root, "UVO/uvo_videos_sparse_frames/")) 
 register_coco_instances("coco_2017_train_unlabeled_densecl_r101", 
                         {}, 
-                        os.path.join(_root, "COCO/annotations/instances_train2017_unlabeled2017_densecl_r101.json"),
-                        os.path.join(_root, "COCO/images"))
+                        os.path.join(_root, "coco/annotations/instances_train2017_unlabeled2017_densecl_r101.json"),
+                        os.path.join(_root, "coco/"))
 register_coco_instances("coco_2017_train_unlabeled_freesolo_pl", 
                         {}, 
                         os.path.join(_root, "coco/annotations/instances_train2017_unlabeled2017_freesolo_pl.json"), 
